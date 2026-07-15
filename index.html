@@ -111,14 +111,25 @@
     .nameinput { width: 100%; padding: 0.7rem 0.75rem; border-radius: 12px; background: var(--color-surface-offset); border: 1px solid color-mix(in srgb, var(--color-border) 68%, transparent); }
     .priceinput { width: 6.5rem; text-align: right; padding: 0.7rem 0.75rem; border-radius: 12px; background: var(--color-surface-offset); border: 1px solid color-mix(in srgb, var(--color-border) 68%, transparent); }
 
+    /* Hide number input spinners */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+
+    /* Reorder buttons */
+    .reorder-btns { display: flex; flex-direction: column; gap: 2px; align-items: center; width: 20px; }
+    .reorder-btn { background: transparent; border: none; color: var(--color-text-faint); padding: 0; display: grid; place-items: center; height: 16px; cursor: pointer; transition: color var(--transition); }
+    .reorder-btn:hover:not(:disabled) { color: var(--color-text); }
+    .reorder-btn svg { width: 14px; height: 14px; }
+
     /* ── Checklist ── */
     .math-grid { display: grid; gap: var(--space-4); }
     .group-card { padding: var(--space-4); background: color-mix(in srgb, var(--color-surface-2) 92%, transparent); border-radius: var(--radius-lg); border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent); display: grid; gap: var(--space-3); }
     .group-head { display: flex; align-items: center; gap: var(--space-2); }
     .group-name { flex: 1; font-size: var(--text-lg); font-weight: 700; background: transparent; border: 0; outline: 0; }
     .checklist { display: grid; gap: var(--space-2); }
-    .item { display: grid; grid-template-columns: auto 1fr auto; gap: 0.65rem; align-items: center; }
-    .item.simple-item { grid-template-columns: auto 1fr; }
+    .item { display: grid; grid-template-columns: auto auto 1fr auto; gap: 0.65rem; align-items: center; }
+    .item.simple-item { grid-template-columns: auto auto 1fr; }
     .item-details { display: grid; gap: 0.2rem; min-width: 0; }
     .dateinput { width: 100%; padding: 0.15rem 0.4rem; border-radius: 6px; background: transparent; border: 1px dashed color-mix(in srgb, var(--color-border) 40%, transparent); font-size: var(--text-xs); color: var(--color-text-muted); }
 
@@ -289,6 +300,8 @@
               <div class="toggle on" id="mathModeToggle" role="switch"></div>
             </div>
             <button class="opt-btn" id="undoBtn">↶ Undo last action</button>
+            <button class="opt-btn" id="resetChecksBtn">↺ Uncheck All Entries</button>
+            <button class="opt-btn danger" id="clearItemsBtn">🗑 Delete All Entries</button>
             <button class="opt-btn" id="exportBtn">⇩ Export Note</button>
             <button class="opt-btn" id="optSettingsBtn">⚙ Settings</button>
             <button class="opt-btn danger" id="deleteBtn">✕ Delete Note</button>
@@ -299,6 +312,10 @@
         <section id="checklistEditor" class="editor hidden">
           <section class="math-grid">
             <div class="metrics-wrapper" id="globalMetrics"></div>
+            <div style="display:flex;justify-content:flex-end;gap:var(--space-2);margin-top:-0.5rem;margin-bottom:0.5rem;">
+              <button class="ghostbtn" id="topResetChecksBtn" type="button" style="padding:0.4rem 0.8rem;font-size:var(--text-sm);">↺ Uncheck All</button>
+              <button class="ghostbtn" id="topClearItemsBtn" type="button" style="padding:0.4rem 0.8rem;font-size:var(--text-sm);color:var(--color-error);">🗑 Clear All</button>
+            </div>
             <div id="groupsHost"></div>
           </section>
         </section>
@@ -309,7 +326,13 @@
             <textarea class="note-body" id="noteBody" placeholder="Start writing..."></textarea>
           </div>
           <div class="note-checklist-section" id="noteClSection">
-            <div style="font-weight:700; font-size:var(--text-lg); padding-bottom:var(--space-2);">Checklist</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:var(--space-2);">
+              <div style="font-weight:700; font-size:var(--text-lg);">Checklist</div>
+              <div style="display:flex;gap:var(--space-2);">
+                <button class="ghostbtn" id="ntTopResetChecksBtn" type="button" style="padding:0.3rem 0.6rem;font-size:var(--text-xs);">↺ Uncheck All</button>
+                <button class="ghostbtn" id="ntTopClearItemsBtn" type="button" style="padding:0.3rem 0.6rem;font-size:var(--text-xs);color:var(--color-error);">🗑 Clear All</button>
+              </div>
+            </div>
             <div id="noteChecklistHost" class="checklist"></div>
             <button class="ghostbtn" id="ntAddCheckItem" type="button" style="width:100%; margin-top:var(--space-2);">+ Add Item</button>
           </div>
@@ -635,7 +658,8 @@
         card.innerHTML = `
           <div class="group-head">
             <input class="group-name" value="${escapeHtml(group.name)}" aria-label="Section name" />
-            <button class="ghostbtn" data-rm-group type="button" style="padding:0.4rem;min-height:0;color:var(--color-text-faint);">✕</button>
+            <button class="ghostbtn" data-reset-group type="button" style="padding:0.4rem;min-height:0;color:var(--color-text-faint);" title="Uncheck all entries in section">↺</button>
+            <button class="ghostbtn" data-rm-group type="button" style="padding:0.4rem;min-height:0;color:var(--color-text-faint);" title="Delete section">✕</button>
           </div>
           ${isMath ? `<div class="inline-fields"><input class="nameinput" value="Paycheck" disabled style="color:var(--color-text-muted)"/><input class="priceinput paycheck-input" type="number" inputmode="decimal" min="0" value="${group.paycheck}" /></div>` : ``}
           <div class="checklist"></div>
@@ -644,6 +668,7 @@
 
         $('.group-name', card).addEventListener('focus', trackUndo);
         $('.group-name', card).addEventListener('input', e => { group.name = e.target.value; markUpdated(note, false); });
+        $('[data-reset-group]', card).onclick = () => showConfirm('Uncheck All', `Uncheck all entries in "${group.name}"?`, () => { trackUndo(); group.items.forEach(i => i.checked = false); markUpdated(note); });
         $('[data-rm-group]', card).onclick = () => showConfirm('Remove Section', `Delete "${group.name}"?`, () => { trackUndo(); note.groups.splice(gi,1); markUpdated(note); });
         $('[data-add-item]', card).onclick = () => { trackUndo(); group.items.push({ id: crypto.randomUUID(), name: '', amount: 0, checked: false, dueDate: '' }); markUpdated(note); };
 
@@ -661,6 +686,14 @@
           row.innerHTML = `
             <div class="swipe-bg">Delete</div>
             <div class="swipe-content item ${item.checked?'checked':''} ${isMath?'':'simple-item'}">
+              <div class="reorder-btns">
+                <button class="reorder-btn reorder-up" ${ii === 0 ? 'style="visibility:hidden;" disabled' : ''}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>
+                </button>
+                <button class="reorder-btn reorder-down" ${ii === group.items.length - 1 ? 'style="visibility:hidden;" disabled' : ''}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+              </div>
               <button class="check ${item.checked?'checked':''}" type="button">${item.checked?'✓':''}</button>
               <div class="item-details">
                 <input class="nameinput item-name" value="${escapeHtml(item.name)}" placeholder="Item name" style="padding:0.3rem 0.5rem;font-size:var(--text-base)" />
@@ -671,6 +704,8 @@
             <button class="hover-delete" title="Delete item">✕</button>`;
 
           $('.check', row).onclick = () => { trackUndo(); item.checked = !item.checked; markUpdated(note); };
+          const upBtn = $('.reorder-up', row); if (upBtn && ii > 0) upBtn.onclick = () => { trackUndo(); [group.items[ii-1], group.items[ii]] = [group.items[ii], group.items[ii-1]]; markUpdated(note); };
+          const dnBtn = $('.reorder-down', row); if (dnBtn && ii < group.items.length - 1) dnBtn.onclick = () => { trackUndo(); [group.items[ii], group.items[ii+1]] = [group.items[ii+1], group.items[ii]]; markUpdated(note); };
           attachSwipeAndDelete(row, () => showConfirm('Delete', `Remove item?`, ()=>{trackUndo();group.items.splice(ii,1);markUpdated(note);}));
 
           $('.item-name', row).addEventListener('focus', trackUndo);
@@ -704,12 +739,22 @@
         row.innerHTML = `
           <div class="swipe-bg">Delete</div>
           <div class="swipe-content note-cl-item ${item.checked?'checked':''}">
+            <div class="reorder-btns">
+              <button class="reorder-btn reorder-up" ${i === 0 ? 'style="visibility:hidden;" disabled' : ''}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>
+              </button>
+              <button class="reorder-btn reorder-down" ${i === cl.length - 1 ? 'style="visibility:hidden;" disabled' : ''}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+            </div>
             <button class="check ${item.checked?'checked':''}" type="button">${item.checked?'✓':''}</button>
             <input class="note-cl-text" value="${escapeHtml(item.text)}" placeholder="To do..." />
           </div>
           <button class="hover-delete" title="Delete item">✕</button>`;
 
         $('.check', row).onclick = () => { trackUndo(); item.checked = !item.checked; markUpdated(note); };
+        const upBtn = $('.reorder-up', row); if (upBtn && i > 0) upBtn.onclick = () => { trackUndo(); [cl[i-1], cl[i]] = [cl[i], cl[i-1]]; markUpdated(note); };
+        const dnBtn = $('.reorder-down', row); if (dnBtn && i < cl.length - 1) dnBtn.onclick = () => { trackUndo(); [cl[i], cl[i+1]] = [cl[i+1], cl[i]]; markUpdated(note); };
         const txt = $('.note-cl-text', row);
         txt.addEventListener('focus', trackUndo);
         txt.addEventListener('input', e => { item.text = e.target.value; markUpdated(note, false); });
@@ -800,6 +845,28 @@
     $('#globalNoteTitle').addEventListener('input', e => { const n = currentNote(); if(n){ n.title = e.target.value; markUpdated(n, false); } });
 
     $('#mathModeToggle').onclick = () => { trackUndo(); const n = currentNote(); if(n){ n.mathMode = !n.mathMode; markUpdated(n); } closeOptions(); };
+    const handleResetChecks = () => {
+      const n = currentNote();
+      if(n && n.groups) showConfirm('Uncheck All', `Uncheck all entries across all sections?`, () => { trackUndo(); n.groups.forEach(g => g.items.forEach(i => i.checked = false)); markUpdated(n); closeOptions(); });
+    };
+    $('#resetChecksBtn').onclick = handleResetChecks;
+    $('#topResetChecksBtn').onclick = handleResetChecks;
+
+    const handleClearItems = () => {
+      const n = currentNote();
+      if(n && n.groups) showConfirm('Delete Entries', `Delete all entries from all sections?`, () => { trackUndo(); n.groups.forEach(g => g.items = []); markUpdated(n); closeOptions(); });
+    };
+    $('#clearItemsBtn').onclick = handleClearItems;
+    $('#topClearItemsBtn').onclick = handleClearItems;
+
+    $('#ntTopResetChecksBtn').onclick = () => {
+      const n = currentNote();
+      if(n && n.noteChecklist) showConfirm('Uncheck All', `Uncheck all tasks?`, () => { trackUndo(); n.noteChecklist.forEach(i => i.checked = false); markUpdated(n); });
+    };
+    $('#ntTopClearItemsBtn').onclick = () => {
+      const n = currentNote();
+      if(n && n.noteChecklist) showConfirm('Delete Tasks', `Delete all tasks?`, () => { trackUndo(); n.noteChecklist = []; markUpdated(n); });
+    };
     $('#deleteBtn').onclick = () => {
       const n = currentNote();
       if(n) showConfirm('Delete Note', `Delete "${n.title}" forever?`, ()=>{ state.notes = state.notes.filter(x=>x.id!==n.id); state.selectedNoteId = null; saveState(); render(); closeOptions(); });
