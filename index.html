@@ -200,9 +200,9 @@
     .select-styled { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; padding-right: 2.2rem; appearance: none; }
 
     /* Responsive Grid for Dashboard */
-    .dashboard-page.grid .dashboard-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    @media (min-width: 600px) { .dashboard-page.grid .dashboard-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-    @media (min-width: 900px) { .dashboard-page.grid .dashboard-list { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+    /* Fix iOS input zoom */
+    @media (max-width: 768px) { .select-styled, .nameinput, .priceinput, .dateinput, .note-cl-text, .group-name { font-size: 16px !important; } }
   </style>
 </head>
 <body>
@@ -261,7 +261,6 @@
         <div class="dashboard-head">
           <div style="font-weight:800; font-size:var(--text-xl);" id="dashboardLabel">Checklists</div>
           <div style="display:flex;gap:var(--space-2);align-items:center;">
-            <button class="ghostbtn" id="layoutToggleBtn" type="button" style="min-height:36px;padding:0.4rem 0.8rem;font-size:var(--text-xs);">Grid</button>
             <select id="sortSelect" class="ghostbtn select-styled" style="padding-right: 2.2rem; min-height: 36px; border-radius: 12px; font-size:var(--text-xs);">
               <option value="recent">Recent</option>
               <option value="az">A-Z</option>
@@ -550,23 +549,12 @@
       return list;
     }
 
-    /* ── FIX #8: Layout Toggle ── */
-    let layout = localStorage.getItem('notesLayout') || 'grid';
-    function updateLayoutBtn() {
-      $('#layoutToggleBtn').textContent = layout === 'grid' ? 'List' : 'Grid';
-      $('#dashboardPage').classList.toggle('grid', layout === 'grid');
-    }
-    $('#layoutToggleBtn').onclick = () => {
-      layout = layout === 'grid' ? 'list' : 'grid';
-      localStorage.setItem('notesLayout', layout);
-      updateLayoutBtn();
-    };
+
 
     /* ── Render Dashboard ── */
     function renderDashboard() {
       const host = $('#noteTabs');
       host.innerHTML = '';
-      updateLayoutBtn();
 
       const tabLabels = { checklist: 'Checklists', notes: 'Notes', draw: 'Drawings' };
       $('#dashboardLabel').textContent = tabLabels[state.currentTab] || 'Dashboard';
@@ -592,6 +580,27 @@
         btn.onclick = () => { state.selectedNoteId = note.id; noteHistory=[]; historyIndex=-1; updateUndoBtn(); render(); };
         host.appendChild(btn);
       });
+
+      if (window.Sortable && !searchQuery) {
+        Sortable.create(host, {
+          animation: 150, delay: 200, delayOnTouchOnly: true,
+          onEnd: evt => {
+            const listItems = filteredNotes();
+            const movedId = listItems[evt.oldIndex].id;
+            const targetId = listItems[evt.newIndex].id;
+            const oldIdx = state.notes.findIndex(n => n.id === movedId);
+            const [moved] = state.notes.splice(oldIdx, 1);
+            let newIdx = state.notes.findIndex(n => n.id === targetId);
+            if (evt.oldIndex < evt.newIndex) newIdx++;
+            state.notes.splice(newIdx, 0, moved);
+            sortMode = 'custom';
+            $('#sortSelect').value = 'custom';
+            localStorage.setItem('sortMode', sortMode);
+            saveState();
+            renderDashboard();
+          }
+        });
+      }
     }
 
     /* ── Render Metrics (Checklist) ── */
@@ -657,6 +666,7 @@
 
         card.innerHTML = `
           <div class="group-head">
+            <div class="drag-handle section-drag-handle" title="Hold to drag">≡</div>
             <input class="group-name" value="${escapeHtml(group.name)}" aria-label="Section name" />
             <button class="ghostbtn" data-reset-group type="button" style="padding:0.4rem;min-height:0;color:var(--color-text-faint);" title="Uncheck all entries in section">↺</button>
             <button class="ghostbtn" data-rm-group type="button" style="padding:0.4rem;min-height:0;color:var(--color-text-faint);" title="Delete section">✕</button>
@@ -686,14 +696,7 @@
           row.innerHTML = `
             <div class="swipe-bg">Delete</div>
             <div class="swipe-content item ${item.checked?'checked':''} ${isMath?'':'simple-item'}">
-              <div class="reorder-btns">
-                <button class="reorder-btn reorder-up" ${ii === 0 ? 'style="visibility:hidden;" disabled' : ''}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>
-                </button>
-                <button class="reorder-btn reorder-down" ${ii === group.items.length - 1 ? 'style="visibility:hidden;" disabled' : ''}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-                </button>
-              </div>
+              <div class="drag-handle item-drag-handle" title="Hold to drag">≡</div>
               <button class="check ${item.checked?'checked':''}" type="button">${item.checked?'✓':''}</button>
               <div class="item-details">
                 <input class="nameinput item-name" value="${escapeHtml(item.name)}" placeholder="Item name" style="padding:0.3rem 0.5rem;font-size:var(--text-base)" />
@@ -704,8 +707,6 @@
             <button class="hover-delete" title="Delete item">✕</button>`;
 
           $('.check', row).onclick = () => { trackUndo(); item.checked = !item.checked; markUpdated(note); };
-          const upBtn = $('.reorder-up', row); if (upBtn && ii > 0) upBtn.onclick = () => { trackUndo(); [group.items[ii-1], group.items[ii]] = [group.items[ii], group.items[ii-1]]; markUpdated(note); };
-          const dnBtn = $('.reorder-down', row); if (dnBtn && ii < group.items.length - 1) dnBtn.onclick = () => { trackUndo(); [group.items[ii], group.items[ii+1]] = [group.items[ii+1], group.items[ii]]; markUpdated(note); };
           attachSwipeAndDelete(row, () => showConfirm('Delete', `Remove item?`, ()=>{trackUndo();group.items.splice(ii,1);markUpdated(note);}));
 
           $('.item-name', row).addEventListener('focus', trackUndo);
@@ -720,8 +721,21 @@
           }
           list.appendChild(row);
         });
+        if (window.Sortable) {
+          Sortable.create(list, {
+            handle: '.item-drag-handle', animation: 150, delay: 200, delayOnTouchOnly: true,
+            onEnd: evt => { trackUndo(); const m = group.items.splice(evt.oldIndex, 1)[0]; group.items.splice(evt.newIndex, 0, m); markUpdated(note, true); }
+          });
+        }
         host.appendChild(card);
       });
+
+      if (window.Sortable) {
+        Sortable.create(host, {
+          handle: '.section-drag-handle', animation: 150, delay: 200, delayOnTouchOnly: true,
+          onEnd: evt => { trackUndo(); const m = note.groups.splice(evt.oldIndex, 1)[0]; note.groups.splice(evt.newIndex, 0, m); markUpdated(note, true); }
+        });
+      }
     }
 
     /* ── Render Note Checklist ── */
@@ -739,22 +753,13 @@
         row.innerHTML = `
           <div class="swipe-bg">Delete</div>
           <div class="swipe-content note-cl-item ${item.checked?'checked':''}">
-            <div class="reorder-btns">
-              <button class="reorder-btn reorder-up" ${i === 0 ? 'style="visibility:hidden;" disabled' : ''}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>
-              </button>
-              <button class="reorder-btn reorder-down" ${i === cl.length - 1 ? 'style="visibility:hidden;" disabled' : ''}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-              </button>
-            </div>
+            <div class="drag-handle item-drag-handle" title="Hold to drag">≡</div>
             <button class="check ${item.checked?'checked':''}" type="button">${item.checked?'✓':''}</button>
             <input class="note-cl-text" value="${escapeHtml(item.text)}" placeholder="To do..." />
           </div>
           <button class="hover-delete" title="Delete item">✕</button>`;
 
         $('.check', row).onclick = () => { trackUndo(); item.checked = !item.checked; markUpdated(note); };
-        const upBtn = $('.reorder-up', row); if (upBtn && i > 0) upBtn.onclick = () => { trackUndo(); [cl[i-1], cl[i]] = [cl[i], cl[i-1]]; markUpdated(note); };
-        const dnBtn = $('.reorder-down', row); if (dnBtn && i < cl.length - 1) dnBtn.onclick = () => { trackUndo(); [cl[i], cl[i+1]] = [cl[i+1], cl[i]]; markUpdated(note); };
         const txt = $('.note-cl-text', row);
         txt.addEventListener('focus', trackUndo);
         txt.addEventListener('input', e => { item.text = e.target.value; markUpdated(note, false); });
@@ -762,6 +767,12 @@
         attachSwipeAndDelete(row, () => { trackUndo(); note.noteChecklist.splice(i,1); markUpdated(note); });
         host.appendChild(row);
       });
+      if (window.Sortable) {
+        Sortable.create(host, {
+          handle: '.item-drag-handle', animation: 150, delay: 200, delayOnTouchOnly: true,
+          onEnd: evt => { trackUndo(); const m = note.noteChecklist.splice(evt.oldIndex, 1)[0]; note.noteChecklist.splice(evt.newIndex, 0, m); markUpdated(note, true); }
+        });
+      }
     }
 
     /* ── Main Render ── */
@@ -903,7 +914,7 @@
     $('#penColor').addEventListener('input', e => state.penColor = e.target.value);
     $('#penSize').addEventListener('input', e => state.penSize = Number(e.target.value));
     $('#undoStrokeBtn').onclick = () => { trackUndo(); const n = currentNote(); state.strokes.pop(); if(n) { n.drawing = state.strokes; markUpdated(n); } };
-    $('#clearCanvasBtn').onclick = () => showConfirm('Clear', 'Delete all drawings?', () => { trackUndo(); const n = currentNote(); state.strokes=[]; if(n){n.drawing=[]; markUpdated(n);} });
+    $('#clearCanvasBtn').onclick = () => showConfirm('Clear', 'Delete all drawings?', () => { trackUndo(); const n = currentNote(); state.strokes=[]; if(n){n.drawing=[]; markUpdated(n);} drawAll(); });
 
     /* ── Import ── */
     $('#importBtn').onclick = () => { $('#importFile').click(); closeDrawer(); };
