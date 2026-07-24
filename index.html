@@ -98,6 +98,11 @@
     .opt-btn { width: 100%; text-align: left; padding: 1rem; border-radius: 12px; background: var(--color-surface-offset); font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
     .opt-btn.danger { color: var(--color-error); }
 
+    /* Confirm Modal */
+    .newnote-modal { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: var(--space-4); background: rgb(0 0 0 / 0.45); backdrop-filter: blur(4px); }
+    .newnote-modal.hidden { display: none !important; }
+    .newnote-modal .options-sheet { transform: none; box-shadow: var(--shadow-md); }
+
     /* Buttons & Inputs */
     .ghostbtn, .primarybtn, .warnbtn { min-height: 44px; padding: 0.8rem 1rem; border-radius: 14px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; }
     .primarybtn { background: var(--color-primary); color: var(--color-text-inverse); }
@@ -113,8 +118,10 @@
     .group-head { display: flex; align-items: center; gap: var(--space-2); }
     .group-name { flex: 1; font-size: var(--text-lg); font-weight: 700; background: transparent; border: 0; outline: 0; }
     .checklist { display: grid; gap: var(--space-2); }
-    .item { display: grid; grid-template-columns: auto 1fr auto; gap: 0.65rem; align-items: center; }
-    .item.simple-item { grid-template-columns: auto 1fr; }
+    .item { display: grid; grid-template-columns: auto 1fr auto auto; gap: 0.65rem; align-items: center; }
+    .item.simple-item { grid-template-columns: auto 1fr auto; }
+    .item-del { color: var(--color-text-faint); padding: 0.35rem; display: grid; place-items: center; border-radius: 8px; flex: 0 0 auto; font-size: var(--text-sm); }
+    .item-del:active { background: var(--color-surface-offset); color: var(--color-error); }
     .item-details { display: grid; gap: 0.2rem; min-width: 0; }
     .dateinput { width: 100%; padding: 0.15rem 0.4rem; border-radius: 6px; background: transparent; border: 1px dashed color-mix(in srgb, var(--color-border) 40%, transparent); font-size: var(--text-xs); color: var(--color-text-muted); }
     
@@ -272,6 +279,8 @@
               <div class="toggle on" id="mathModeToggle" role="switch"></div>
             </div>
             <button class="opt-btn" id="undoBtn">↶ Undo last action</button>
+            <button class="opt-btn" id="redoBtn">↷ Redo</button>
+            <button class="opt-btn" id="duplicateBtn">⧉ Duplicate Note</button>
             <button class="opt-btn" id="exportBtn">⇩ Export Note</button>
             <button class="opt-btn danger" id="deleteBtn">✕ Delete Note</button>
           </div>
@@ -346,10 +355,15 @@
     function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function sum(arr) { return arr.reduce((a, b) => a + (Number(b) || 0), 0); }
     function formatUpdated(ts) {
-      const d = Math.round((ts - Date.now()) / 60000);
-      if (Math.abs(d) < 1) return 'Updated now';
-      if (Math.abs(d) < 60) return 'Updated ' + dateFmt.format(d, 'minute');
-      return 'Updated ' + dateFmt.format(Math.round(d / 60), 'hour');
+      const mins = Math.round((ts - Date.now()) / 60000);
+      const a = Math.abs(mins);
+      if (a < 1) return 'Updated now';
+      if (a < 60) return 'Updated ' + dateFmt.format(mins, 'minute');
+      const hrs = Math.round(mins / 60);
+      if (Math.abs(hrs) < 24) return 'Updated ' + dateFmt.format(hrs, 'hour');
+      const days = Math.round(mins / 1440);
+      if (Math.abs(days) < 7) return 'Updated ' + dateFmt.format(days, 'day');
+      return 'Updated ' + dateFmt.format(Math.round(mins / 10080), 'week');
     }
 
     /* ── UI Logic (Sidebar & Options) ── */
@@ -358,15 +372,16 @@
     $('#closeDrawerBtn').onclick = closeDrawer;
     $('#drawerOverlay').onclick = closeDrawer;
 
-    $('#optionsBtn').onclick = () => { $('#optionsBg').classList.add('active'); $('#optionsSheet').classList.add('active'); };
+    $('#optionsBtn').onclick = () => { updateHistoryBtns(); $('#optionsBg').classList.add('active'); $('#optionsSheet').classList.add('active'); };
     const closeOptions = () => { $('#optionsBg').classList.remove('active'); $('#optionsSheet').classList.remove('active'); };
     $('#optionsBg').onclick = closeOptions;
 
     /* ── Currency ── */
     let currentCurrency = localStorage.getItem('currency') || 'USD';
-    let money = new Intl.NumberFormat('en-US', { style: 'currency', currency: currentCurrency, maximumFractionDigits: 0 });
+    const makeMoney = cur => new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    let money = makeMoney(currentCurrency);
     $('#currencySelect').value = currentCurrency;
-    $('#currencySelect').addEventListener('change', e => { currentCurrency = e.target.value; localStorage.setItem('currency', currentCurrency); money = new Intl.NumberFormat('en-US', { style: 'currency', currency: currentCurrency, maximumFractionDigits: 0 }); render(); closeDrawer(); });
+    $('#currencySelect').addEventListener('change', e => { currentCurrency = e.target.value; localStorage.setItem('currency', currentCurrency); money = makeMoney(currentCurrency); render(); closeDrawer(); });
 
     /* ── State ── */
     const state = {
@@ -376,8 +391,15 @@
       strokes: [], currentStroke: null, penColor: '#67b6bf', penSize: 3
     };
 
-    /* ── Undo ── */
+    /* ── Undo / Redo ── */
     let noteHistory = []; let historyIndex = -1; let isUndoRedo = false;
+    function initHistory() {
+      const n = currentNote();
+      noteHistory = n ? [JSON.stringify(n)] : [];
+      historyIndex = n ? 0 : -1;
+      updateHistoryBtns();
+    }
+    // Called before an edit begins: commits the current (pre-edit) state as a checkpoint.
     function trackUndo() {
       if (isUndoRedo) return;
       const note = currentNote(); if (!note) return;
@@ -385,25 +407,46 @@
       if (historyIndex >= 0 && noteHistory[historyIndex] === snap) return;
       noteHistory = noteHistory.slice(0, historyIndex + 1);
       noteHistory.push(snap);
-      if (noteHistory.length > 50) noteHistory.shift(); else historyIndex++;
-      updateUndoBtn();
+      historyIndex++;
+      if (noteHistory.length > 100) { noteHistory.shift(); historyIndex--; }
+      updateHistoryBtns();
     }
-    function updateUndoBtn() { $('#undoBtn').disabled = historyIndex <= 0; }
+    function restoreSnap(str) {
+      isUndoRedo = true;
+      const snap = JSON.parse(str);
+      const idx = state.notes.findIndex(n => n.id === state.selectedNoteId);
+      if (idx !== -1) { state.notes[idx] = snap; markUpdated(state.notes[idx], true); }
+      isUndoRedo = false;
+    }
+    function liveDirty() { const n = currentNote(); return !!(n && historyIndex >= 0 && noteHistory[historyIndex] !== JSON.stringify(n)); }
+    function updateHistoryBtns() {
+      const undoBtn = $('#undoBtn'), redoBtn = $('#redoBtn');
+      if (undoBtn) undoBtn.disabled = !(historyIndex > 0 || liveDirty());
+      if (redoBtn) redoBtn.disabled = historyIndex >= noteHistory.length - 1;
+    }
+    // Backwards-compat alias (older calls used updateUndoBtn).
+    const updateUndoBtn = updateHistoryBtns;
     $('#undoBtn').onclick = () => {
-      if (historyIndex > 0) {
-        historyIndex--; isUndoRedo = true;
-        const snap = JSON.parse(noteHistory[historyIndex]);
-        const idx = state.notes.findIndex(n => n.id === state.selectedNoteId);
-        if (idx !== -1) { state.notes[idx] = snap; markUpdated(state.notes[idx], true); }
-        isUndoRedo = false; updateUndoBtn(); closeOptions();
+      const note = currentNote(); if (!note) return;
+      const live = JSON.stringify(note);
+      // Commit any uncommitted live edits first so they can be redone.
+      if (historyIndex >= 0 && noteHistory[historyIndex] !== live) {
+        noteHistory = noteHistory.slice(0, historyIndex + 1);
+        noteHistory.push(live); historyIndex++;
       }
+      if (historyIndex > 0) { historyIndex--; restoreSnap(noteHistory[historyIndex]); }
+      updateHistoryBtns(); closeOptions();
+    };
+    $('#redoBtn').onclick = () => {
+      if (historyIndex < noteHistory.length - 1) { historyIndex++; restoreSnap(noteHistory[historyIndex]); updateHistoryBtns(); closeOptions(); }
     };
 
     /* ── Confirm modal ── */
     let confirmCb = null;
-    function showConfirm(title, msg, cb) { $('#confirmTitle').textContent = title; $('#confirmMessage').textContent = msg; confirmCb = cb; $('#confirmModal').classList.remove('hidden'); }
-    $('#confirmCancelBtn').onclick = () => $('#confirmModal').classList.add('hidden');
-    $('#confirmActionBtn').onclick = () => { $('#confirmModal').classList.add('hidden'); if (confirmCb) confirmCb(); };
+    function closeConfirm() { $('#confirmModal').classList.add('hidden'); $('#confirmModal').setAttribute('aria-hidden', 'true'); confirmCb = null; }
+    function showConfirm(title, msg, cb) { $('#confirmTitle').textContent = title; $('#confirmMessage').textContent = msg; confirmCb = cb; $('#confirmModal').classList.remove('hidden'); $('#confirmModal').setAttribute('aria-hidden', 'false'); }
+    $('#confirmCancelBtn').onclick = closeConfirm;
+    $('#confirmActionBtn').onclick = () => { const cb = confirmCb; closeConfirm(); if (cb) cb(); };
 
     /* ── IndexedDB ── */
     const DB = 'notes-math-studio-db'; let dbP = null;
@@ -420,7 +463,7 @@
         const db = await openDb(); const tx = db.transaction('meta','readonly'); const s = tx.objectStore('meta');
         const get = k => new Promise(r => { const q = s.get(k); q.onsuccess = () => r(q.result); q.onerror = () => r(undefined); });
         let notes = await get('notes');
-        if (notes && Array.isArray(notes) && notes.length) state.notes = notes;
+        if (notes && Array.isArray(notes) && notes.length) state.notes = notes.map(normalizeNote).filter(Boolean);
       } catch(e) {}
     }
 
@@ -465,7 +508,12 @@
 
     function filteredNotes() {
       let list = state.notes.filter(n => n.mode === state.currentTab);
-      if (searchQuery) list = list.filter(n => (n.title||'').toLowerCase().includes(searchQuery) || (n.body||'').toLowerCase().includes(searchQuery));
+      if (searchQuery) list = list.filter(n => {
+        const hay = [n.title||'', n.body||''];
+        (n.groups||[]).forEach(g => { hay.push(g.name||''); (g.items||[]).forEach(i => hay.push(i.name||'')); });
+        (n.noteChecklist||[]).forEach(c => hay.push(c.text||''));
+        return hay.join('   ').toLowerCase().includes(searchQuery);
+      });
       list = [...list];
       if (sortMode === 'recent') list.sort((a,b)=>b.updatedAt-a.updatedAt);
       else if (sortMode === 'oldest') list.sort((a,b)=>a.updatedAt-b.updatedAt);
@@ -499,7 +547,7 @@
           preview = sc ? `${sc} stroke${sc>1?'s':''}` : 'Empty canvas';
         }
         btn.innerHTML = `<div class="note-entry-title">${escapeHtml(note.title||'Untitled')}</div><div class="note-entry-meta"><span>${note.mathMode && note.mode==='checklist' ? 'Budget' : note.mode}</span><span>${escapeHtml(formatUpdated(note.updatedAt).replace('Updated ',''))}</span></div><div class="note-entry-preview">${preview}</div>`;
-        btn.onclick = () => { state.selectedNoteId = note.id; noteHistory=[]; historyIndex=-1; updateUndoBtn(); render(); };
+        btn.onclick = () => { state.selectedNoteId = note.id; initHistory(); render(); };
         host.appendChild(btn);
       });
     }
@@ -588,9 +636,11 @@
                 ${isMath ? `<input type="date" class="dateinput due-date" value="${item.dueDate||''}" />` : ''}
               </div>
               ${isMath ? `<input class="priceinput money" type="number" inputmode="decimal" min="0" value="${item.amount}" style="padding:0.3rem 0.5rem;font-size:var(--text-base)" />` : ''}
+              <button class="item-del" type="button" aria-label="Delete item">✕</button>
             </div>`;
 
           $('.check', row).onclick = () => { trackUndo(); item.checked = !item.checked; markUpdated(note); };
+          $('.item-del', row).onclick = () => showConfirm('Delete', 'Remove this item?', () => { trackUndo(); group.items.splice(ii,1); markUpdated(note); });
 
           const content = $('.swipe-content', row);
           let sx = 0, cx = 0;
@@ -600,6 +650,13 @@
 
           $('.item-name', row).addEventListener('focus', trackUndo);
           $('.item-name', row).addEventListener('input', e => { item.name = e.target.value; markUpdated(note, false); });
+          $('.item-name', row).addEventListener('keydown', e => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault(); trackUndo();
+            group.items.splice(ii+1, 0, { id: crypto.randomUUID(), name: '', amount: 0, checked: false, dueDate: '' });
+            markUpdated(note);
+            setTimeout(() => { const cards = $$('.group-card', $('#groupsHost')); const c = cards[gi]; if (c) { const inputs = $$('.item-name', c); if (inputs[ii+1]) inputs[ii+1].focus(); } }, 50);
+          });
           if (isMath) {
             const m = $('.money', row);
             m.addEventListener('focus', e => { trackUndo(); if(e.target.value==='0') e.target.value=''; });
@@ -627,9 +684,11 @@
           <div class="swipe-content note-cl-item ${item.checked?'checked':''}">
             <button class="check ${item.checked?'checked':''}" type="button">${item.checked?'✓':''}</button>
             <input class="note-cl-text" value="${escapeHtml(item.text)}" placeholder="To do..." />
+            <button class="item-del" type="button" aria-label="Delete item">✕</button>
           </div>`;
 
         $('.check', row).onclick = () => { trackUndo(); item.checked = !item.checked; markUpdated(note); };
+        $('.item-del', row).onclick = () => showConfirm('Delete', 'Remove this item?', () => { trackUndo(); note.noteChecklist.splice(i,1); markUpdated(note); });
         const txt = $('.note-cl-text', row);
         txt.addEventListener('focus', trackUndo);
         txt.addEventListener('input', e => { item.text = e.target.value; markUpdated(note, false); });
@@ -697,7 +756,7 @@
       };
       state.notes.unshift(note);
       state.selectedNoteId = note.id;
-      noteHistory = []; historyIndex = -1; updateUndoBtn();
+      initHistory();
       saveState(); render();
     }
 
@@ -706,6 +765,8 @@
       btn.addEventListener('click', () => {
         state.currentTab = btn.dataset.tab;
         state.selectedNoteId = null;
+        searchQuery = '';
+        $('#searchInput').value = '';
         localStorage.setItem('currentTab', state.currentTab);
         render();
       });
@@ -720,6 +781,17 @@
     $('#deleteBtn').onclick = () => { 
       const n = currentNote(); 
       if(n) showConfirm('Delete Note', `Delete "${n.title}" forever?`, ()=>{ state.notes = state.notes.filter(x=>x.id!==n.id); state.selectedNoteId = null; saveState(); render(); closeOptions(); }); 
+    };
+    $('#duplicateBtn').onclick = () => {
+      const n = currentNote(); if(!n) return;
+      const copy = JSON.parse(JSON.stringify(n));
+      copy.id = crypto.randomUUID();
+      copy.title = (n.title || 'Untitled') + ' (copy)';
+      copy.updatedAt = Date.now();
+      state.notes.unshift(copy);
+      state.selectedNoteId = copy.id;
+      initHistory();
+      saveState(); render(); closeOptions();
     };
     $('#exportBtn').onclick = () => {
       const n = currentNote(); if(!n) return;
@@ -754,9 +826,54 @@
     $('#penSize').addEventListener('input', e => state.penSize = Number(e.target.value));
     $('#clearCanvasBtn').onclick = () => showConfirm('Clear', 'Delete all drawings?', () => { trackUndo(); const n = currentNote(); state.strokes=[]; if(n){n.drawing=[]; markUpdated(n);} });
 
-    /* ── Import ── */
+    /* ── Import (with schema validation) ── */
+    function normalizeItem(it) {
+      it = it || {};
+      return { id: (typeof it.id==='string'&&it.id)?it.id:crypto.randomUUID(), name: typeof it.name==='string'?it.name:'', amount: Number(it.amount)||0, checked: !!it.checked, dueDate: typeof it.dueDate==='string'?it.dueDate:'' };
+    }
+    function normalizeGroup(g) {
+      g = g || {};
+      return { id: (typeof g.id==='string'&&g.id)?g.id:crypto.randomUUID(), name: typeof g.name==='string'?g.name:'Section', paycheck: Number(g.paycheck)||0, items: Array.isArray(g.items)?g.items.map(normalizeItem):[] };
+    }
+    function normalizeNote(n) {
+      if (!n || typeof n !== 'object') return null;
+      const mode = ['checklist','notes','draw'].includes(n.mode) ? n.mode : 'notes';
+      return {
+        id: (typeof n.id==='string'&&n.id)?n.id:crypto.randomUUID(),
+        title: typeof n.title==='string'?n.title:'Untitled',
+        mode,
+        mathMode: mode==='checklist' ? (n.mathMode!==undefined?!!n.mathMode:true) : false,
+        body: typeof n.body==='string'?n.body:'',
+        drawing: Array.isArray(n.drawing)?n.drawing:[],
+        noteChecklist: Array.isArray(n.noteChecklist)?n.noteChecklist.map(c=>({id:(typeof (c&&c.id)==='string'&&c.id)?c.id:crypto.randomUUID(), text:typeof (c&&c.text)==='string'?c.text:'', checked:!!(c&&c.checked)})):[],
+        updatedAt: Number(n.updatedAt)||Date.now(),
+        groups: Array.isArray(n.groups)?n.groups.map(normalizeGroup):(mode==='checklist'?[{id:crypto.randomUUID(),name:'Section 1',paycheck:0,items:[]}]:[])
+      };
+    }
     $('#importBtn').onclick = () => { $('#importFile').click(); closeDrawer(); };
-    $('#importFile').onchange = e => { const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=ev=>{try{const d=JSON.parse(ev.target.result); if(Array.isArray(d)){state.notes=[...d,...state.notes]; saveState(); render();}}catch(err){alert('Invalid file');} $('#importFile').value='';}; r.readAsText(f); };
+    $('#importFile').onchange = e => {
+      const f=e.target.files[0]; if(!f) return;
+      const r=new FileReader();
+      r.onload=ev=>{
+        try{
+          const d=JSON.parse(ev.target.result);
+          const arr = Array.isArray(d) ? d : [d];
+          const existingIds = new Set(state.notes.map(n=>n.id));
+          const imported = [];
+          arr.forEach(raw => {
+            const n = normalizeNote(raw);
+            if (!n) return;
+            if (existingIds.has(n.id)) n.id = crypto.randomUUID();
+            existingIds.add(n.id);
+            imported.push(n);
+          });
+          if (imported.length) { state.notes = [...imported, ...state.notes]; saveState(); render(); alert(`Imported ${imported.length} item${imported.length>1?'s':''}.`); }
+          else alert('No valid notes found in file.');
+        }catch(err){ alert('Invalid file'); }
+        $('#importFile').value='';
+      };
+      r.readAsText(f);
+    };
 
     /* ── Theme ── */
     const themeMatch = window.matchMedia('(prefers-color-scheme: dark)');
@@ -765,6 +882,18 @@
     themeMatch.addEventListener('change', e => { if(!localStorage.getItem('theme')) applyTheme(e.matches?'dark':'light'); });
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) applyTheme(savedTheme); else applyTheme(themeMatch.matches ? 'dark' : 'light');
+
+    /* ── Escape closes topmost overlay ── */
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if (!$('#confirmModal').classList.contains('hidden')) { closeConfirm(); return; }
+      if ($('#optionsSheet').classList.contains('active')) { closeOptions(); return; }
+      if ($('#sidebarDrawer').classList.contains('active')) { closeDrawer(); return; }
+    });
+
+    /* ── Flush pending saves before the app is backgrounded/closed ── */
+    window.addEventListener('beforeunload', () => { saveState(); });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveState(); });
 
     /* ── Init ── */
     (async () => { await loadState(); render(); setTimeout(resizeCanvas, 50); })();
